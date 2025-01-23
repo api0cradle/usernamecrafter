@@ -210,9 +210,10 @@ int main(int argc, char* argv[]) {
 
     if (output_file) {
         printf("[+] - Output file: %s\n", output_file);
-        // Use fopen instead of fopen_s
+        #pragma warning(suppress : 4996)
         outfile = fopen(output_file, "w");
         if (!outfile) {
+            #pragma warning(suppress : 4996)
             fprintf(stderr, "Error opening output file: %s\n", strerror(errno));
             exit(EXIT_FAILURE);
         }
@@ -220,8 +221,10 @@ int main(int argc, char* argv[]) {
 
     if (firstnames_file) {
         printf("[+] - Firstnames file: %s\n", firstnames_file);
+        #pragma warning(suppress : 4996)
         firstnames = fopen(firstnames_file, "r");
         if (!firstnames) {
+            #pragma warning(suppress : 4996)
             fprintf(stderr, "Error opening firstnames file: %s\n", strerror(errno));
             exit(EXIT_FAILURE);
         }
@@ -229,8 +232,10 @@ int main(int argc, char* argv[]) {
 
     if (lastnames_file) {
         printf("[+] - Lastnames file: %s\n", lastnames_file);
+        #pragma warning(suppress : 4996)
         lastnames = fopen(lastnames_file, "r");
         if (!lastnames) {
+        #pragma warning(suppress : 4996)
             fprintf(stderr, "Error opening lastnames file: %s\n", strerror(errno));
             exit(EXIT_FAILURE);
         }
@@ -270,4 +275,5 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+
 
