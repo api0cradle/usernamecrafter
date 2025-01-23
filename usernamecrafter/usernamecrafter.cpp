@@ -220,7 +220,6 @@ int main(int argc, char* argv[]) {
 
     if (firstnames_file) {
         printf("[+] - Firstnames file: %s\n", firstnames_file);
-        // Use fopen instead of fopen_s
         firstnames = fopen(firstnames_file, "r");
         if (!firstnames) {
             fprintf(stderr, "Error opening firstnames file: %s\n", strerror(errno));
@@ -230,7 +229,6 @@ int main(int argc, char* argv[]) {
 
     if (lastnames_file) {
         printf("[+] - Lastnames file: %s\n", lastnames_file);
-        // Use fopen instead of fopen_s
         lastnames = fopen(lastnames_file, "r");
         if (!lastnames) {
             fprintf(stderr, "Error opening lastnames file: %s\n", strerror(errno));
