@@ -8,6 +8,11 @@
 #define MAX_NAME_LENGTH 100
 #define VERSION "1.0"
 
+// If compiling on MSVC (Visual Studio), map strdup to _strdup
+#ifdef _MSC_VER
+#define strdup _strdup
+#endif
+
 void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, const char* format) {
     clock_t start_time = clock();
     int lastnames_count = 0;
@@ -21,8 +26,8 @@ void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, c
     // Read all lastnames
     char lastname[MAX_NAME_LENGTH];
     while (fgets(lastname, sizeof(lastname), lastnames_file) != NULL) {
-        lastname[strcspn(lastname, "\n")] = '\0';
-        char* temp = _strdup(lastname);
+        lastname[strcspn(lastname, "\n")] = '\0';  // Remove newline
+        char* temp = strdup(lastname);             // Use portable strdup
         if (temp == NULL) {
             fprintf(stderr, "Failed to allocate memory for lastnames\n");
             exit(EXIT_FAILURE);
@@ -41,8 +46,8 @@ void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, c
     // Read all firstnames
     char firstname[MAX_NAME_LENGTH];
     while (fgets(firstname, sizeof(firstname), firstnames_file) != NULL) {
-        firstname[strcspn(firstname, "\n")] = '\0';
-        char* temp = _strdup(firstname);
+        firstname[strcspn(firstname, "\n")] = '\0'; // Remove newline
+        char* temp = strdup(firstname);             // Use portable strdup
         if (temp == NULL) {
             fprintf(stderr, "Failed to allocate memory for firstnames\n");
             exit(EXIT_FAILURE);
@@ -58,13 +63,11 @@ void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, c
         firstnames_count++;
     }
 
-
     // Generate output based on format
     for (int i = 0; i < firstnames_count; i++) {
         for (int j = 0; j < lastnames_count; j++) {
             const char* ptr = format;
             while (*ptr) {
-                //printf("Current pointer: %.12s\n", ptr); 
                 if (strncmp(ptr, "{firstname}(", 12) == 0 && isdigit(ptr[12])) {
                     int len = atoi(ptr + 12);
                     fprintf(output, "%.*s", len, firstnames[i]);
@@ -131,8 +134,6 @@ void display_help(const char* program_name) {
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}{lastname}(2)\n", program_name);
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}(3){lastname}(3)\n", program_name);
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}(3)_{lastname}(3)@domain.com\n", program_name);
-    //        fprintf(stderr, "Formats:\n1 = (a-z)lastname\n2 = (a-z).lastname\n3 = lastname(a-z)\n4 = lastname.(a-z)\n5 = firstname(a-z)\n6 = firstname.(a-z)\n7 = (a-z)firstname\n8 = (a-z).firstname\n9 = firstname.lastname\n10 = firstnamelastname\n11 = lastname.firstname\n12 = lastnamefirstname\n13 = (a-z)(a-z)(a-z)\n14 = (a-z)(a-z)(a-z)(a-z)\n99 = all formats\nwhen using 99 it will use the use pre formatted file names for generated files beginning with list_");
-
 }
 
 int main(int argc, char* argv[]) {
@@ -141,13 +142,11 @@ int main(int argc, char* argv[]) {
     char* firstnames_file = NULL;
     char* lastnames_file = NULL;
     char* format = NULL;
-    int verbose = 0;
 
     // Declare file pointers
     FILE* outfile = NULL;
     FILE* firstnames = NULL;
     FILE* lastnames = NULL;
-    int outformat = 0;
 
     // Iterate through arguments
     for (int i = 1; i < argc; i++) {
@@ -201,7 +200,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Display parsed options
+    // Display banner and parsed options
     printf("                    =====\n");
     printf("                    |@@@|\n");
     printf("        John Smith >|***|> J.Smith@dom.com\n");
@@ -211,30 +210,30 @@ int main(int argc, char* argv[]) {
 
     if (output_file) {
         printf("[+] - Output file: %s\n", output_file);
-        if (fopen_s(&outfile, output_file, "w") != 0) {
-            char err_msg[100];
-            strerror_s(err_msg, sizeof(err_msg), errno);
-            fprintf(stderr, "Error opening output file: %s\n", err_msg);
+        // Use fopen instead of fopen_s
+        outfile = fopen(output_file, "w");
+        if (!outfile) {
+            fprintf(stderr, "Error opening output file: %s\n", strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
 
     if (firstnames_file) {
         printf("[+] - Firstnames file: %s\n", firstnames_file);
-        if (fopen_s(&firstnames, firstnames_file, "r") != 0) {
-            char err_msg[100];
-            strerror_s(err_msg, sizeof(err_msg), errno);
-            fprintf(stderr, "Error opening firstnames file: %s\n", err_msg);
+        // Use fopen instead of fopen_s
+        firstnames = fopen(firstnames_file, "r");
+        if (!firstnames) {
+            fprintf(stderr, "Error opening firstnames file: %s\n", strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
 
     if (lastnames_file) {
         printf("[+] - Lastnames file: %s\n", lastnames_file);
-        if (fopen_s(&lastnames, lastnames_file, "r") != 0) {
-            char err_msg[100];
-            strerror_s(err_msg, sizeof(err_msg), errno);
-            fprintf(stderr, "Error opening lastnames file: %s\n", err_msg);
+        // Use fopen instead of fopen_s
+        lastnames = fopen(lastnames_file, "r");
+        if (!lastnames) {
+            fprintf(stderr, "Error opening lastnames file: %s\n", strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
@@ -243,31 +242,34 @@ int main(int argc, char* argv[]) {
         printf("[+] - Format: %s\n", format);
     }
 
+    // If all parameters are missing, show help prompt
     if (!output_file && !firstnames_file && !lastnames_file && !format) {
         printf("No parameters specified - Restart with -h or --help for options\n");
         return 1;
     }
 
     // Check if files are opened successfully
-    if (firstnames == NULL) {
+    if (!firstnames) {
         fprintf(stderr, "Error: Firstnames file could not be opened\n");
         return 1;
     }
-    if (lastnames == NULL) {
+    if (!lastnames) {
         fprintf(stderr, "Error: Lastnames file could not be opened\n");
         return 1;
     }
-    if (outfile == NULL) {
+    if (!outfile) {
         fprintf(stderr, "Error: Output file could not be opened\n");
         return 1;
     }
 
-    //generate_lists(firstnames_file, lastnames_file, output_file, atoi(format));
+    // Generate the list
     generate_lists(firstnames, lastnames, outfile, format);
+
+    // Close all open files
     fclose(lastnames);
     fclose(firstnames);
     fclose(outfile);
 
     return 0;
-
 }
+
