@@ -4,7 +4,7 @@ project(username-crafter)
 
 add_executable(username-crafter)
 
-add_subdirectory(usernamecrafter)
+add_subdirectory(src)
 
 enable_testing()
 add_subdirectory(test)
