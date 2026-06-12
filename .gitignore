@@ -1,14 +1,40 @@
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleasePublic/
 [Oo]utput/
 [Ll]og/
 [Ll]ogs/
 
+# Build output directories (Visual Studio platform/config folders)
+[Xx]64/
+[Xx]86/
+[Ww]in32/
+[Bb]uild/
+[Bb]uilds/
+
+# Compiled binaries and link artifacts (do not commit)
+*.exe
+*.dll
+*.obj
+*.o
+*.exp
+*.ilk
+*.iobj
+*.ipdb
+*.lib
+*.a
+*.tlog
+
 # Visual Studio cache/options directory
 .vs/
 
-usernamecrafter/usernamecrafter/x64/*
+# Claude Code artifacts (not part of the project)
+.remember/
+.claude/
+CLAUDE.md
+.remember.md
 
 # User-specific files
 *.user

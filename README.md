@@ -5,6 +5,8 @@ User enumeration is becoming more and more important when we are performing pass
 I saw myself needing a tool that can generate userlists fast and the result is this project.
 The tool is flexible in the sense that you can specify formats how you see fit with the -f parameter.
 
+Output is always **lowercase** and **deduplicated** - every line in the result is unique. Deduplication keeps one copy of each generated username in memory, so peak memory use scales with the size of the unique output.
+
 I have a pre-compiled version in the x64\Release folder. 
 If you don't trust me you can simply fire the project up in Visual Studio and compile it. 
 
