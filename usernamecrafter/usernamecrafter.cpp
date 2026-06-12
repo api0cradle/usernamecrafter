@@ -7,9 +7,10 @@
 #include <time.h>
 #include <ctype.h>
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
-#include <unordered_set>
 
 #ifdef _MSC_VER
 #define strdup _strdup   // MSVC names the POSIX function _strdup
@@ -135,6 +136,136 @@ static char** read_names(FILE* file, int* count) {
     return names;
 }
 
+// Exact, allocation-light dedup of generated lines.
+//
+// A std::unordered_set<std::string> works but is slow at scale: it heap-allocates a node (and,
+// for lines longer than the small-string buffer, a separate char buffer) for every unique line,
+// then chases pointers on every lookup. For tens of millions of lines that allocation churn and
+// the cache-unfriendly layout dominate runtime.
+//
+// Instead we keep unique line bytes back-to-back in big arena blocks (one bump-allocator, almost
+// no per-line malloc) and index them with a flat open-addressing table of pointers. Lookups stay
+// in contiguous memory and comparisons are exact byte-for-byte, so there is no hash-collision risk
+// of dropping a genuinely distinct username.
+class LineSet {
+public:
+    explicit LineSet(size_t expected) {
+        size_t need = (size_t)(expected / kLoadFactor) + 1;
+        // Cap the up-front table so an absurd estimate can't try to allocate many GB; grow() covers
+        // anything larger by rehashing as needed.
+        const size_t kMaxInitialSlots = (size_t)1 << 27;  // ~1 GiB of pointers
+        if (need > kMaxInitialSlots) need = kMaxInitialSlots;
+        cap_ = 16;
+        while (cap_ < need) cap_ <<= 1;
+        mask_ = cap_ - 1;
+        table_ = (char**)calloc(cap_, sizeof(char*));
+        if (table_ == NULL) {
+            fprintf(stderr, "Failed to allocate dedup table\n");
+            exit(EXIT_FAILURE);
+        }
+        grow_at_ = (size_t)(cap_ * kLoadFactor);
+    }
+
+    ~LineSet() {
+        for (char* block : blocks_) free(block);
+        free(table_);
+    }
+
+    // Returns true if (s, n) was not seen before (and records it); false if it is a duplicate.
+    bool insert(const char* s, size_t n) {
+        uint64_t h = hash_bytes(s, n);
+        size_t pos = h & mask_;
+        while (table_[pos] != NULL) {
+            if (record_equals(table_[pos], s, n)) return false;
+            pos = (pos + 1) & mask_;
+        }
+        if (count_ >= grow_at_) {
+            grow();
+            pos = h & mask_;
+            while (table_[pos] != NULL) pos = (pos + 1) & mask_;
+        }
+        table_[pos] = store(s, n);
+        count_++;
+        return true;
+    }
+
+private:
+    static const size_t kBlockSize = (size_t)16 << 20;  // arena block granularity
+    static constexpr double kLoadFactor = 0.7;
+
+    // Record layout in the arena: [uint32_t length][bytes].
+    static uint64_t hash_bytes(const char* s, size_t n) {  // FNV-1a (64-bit)
+        uint64_t h = 1469598103934665603ULL;
+        for (size_t i = 0; i < n; i++) {
+            h ^= (unsigned char)s[i];
+            h *= 1099511628211ULL;
+        }
+        return h;
+    }
+
+    static bool record_equals(const char* rec, const char* s, size_t n) {
+        uint32_t len;
+        memcpy(&len, rec, sizeof(uint32_t));
+        return len == n && memcmp(rec + sizeof(uint32_t), s, n) == 0;
+    }
+
+    char* store(const char* s, size_t n) {
+        size_t rec = sizeof(uint32_t) + n;
+        if (block_left_ < rec) {
+            size_t bs = rec > kBlockSize ? rec : kBlockSize;
+            block_ = (char*)malloc(bs);
+            if (block_ == NULL) {
+                fprintf(stderr, "Failed to allocate dedup arena\n");
+                exit(EXIT_FAILURE);
+            }
+            blocks_.push_back(block_);
+            block_left_ = bs;
+        }
+        char* p = block_;
+        uint32_t len = (uint32_t)n;
+        memcpy(p, &len, sizeof(uint32_t));
+        memcpy(p + sizeof(uint32_t), s, n);
+        block_ += rec;
+        block_left_ -= rec;
+        return p;
+    }
+
+    void grow() {
+        size_t ncap = cap_ << 1;
+        size_t nmask = ncap - 1;
+        char** nt = (char**)calloc(ncap, sizeof(char*));
+        if (nt == NULL) {
+            fprintf(stderr, "Failed to grow dedup table\n");
+            exit(EXIT_FAILURE);
+        }
+        for (size_t i = 0; i < cap_; i++) {
+            char* rec = table_[i];
+            if (rec == NULL) continue;
+            uint32_t len;
+            memcpy(&len, rec, sizeof(uint32_t));
+            uint64_t h = hash_bytes(rec + sizeof(uint32_t), len);
+            size_t pos = h & nmask;
+            while (nt[pos] != NULL) pos = (pos + 1) & nmask;
+            nt[pos] = rec;
+        }
+        free(table_);
+        table_ = nt;
+        cap_ = ncap;
+        mask_ = nmask;
+        grow_at_ = (size_t)(cap_ * kLoadFactor);
+    }
+
+    std::vector<char*> blocks_;
+    char* block_ = NULL;
+    size_t block_left_ = 0;
+
+    char** table_ = NULL;
+    size_t cap_ = 0;
+    size_t mask_ = 0;
+    size_t count_ = 0;
+    size_t grow_at_ = 0;
+};
+
 void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, const char* format) {
     clock_t start_time = clock();
 
@@ -153,12 +284,11 @@ void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, c
     char** lastnames = read_names(lastnames_file, &lastnames_count);
 
     // Dedup every emitted line. `seen` holds one copy of each unique username.
-    std::unordered_set<std::string> seen;
     size_t estimate = (size_t)firstnames_count * (size_t)lastnames_count;
-    if (estimate > 4000000) estimate = 4000000;   // cap the up-front reservation
-    seen.reserve(estimate);
+    LineSet seen(estimate);
 
     std::string line;
+    line.reserve(64);
     unsigned long long unique_count = 0;
     unsigned long long dup_count = 0;
 
@@ -193,9 +323,9 @@ void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, c
                 }
             }
 
-            if (seen.insert(line).second) {
+            line.push_back('\n');
+            if (seen.insert(line.data(), line.size())) {
                 fwrite(line.data(), 1, line.size(), output);
-                fputc('\n', output);
                 unique_count++;
             }
             else {
@@ -332,6 +462,9 @@ int main(int argc, char* argv[]) {
         if (outfile == NULL) {
             exit(EXIT_FAILURE);
         }
+        // Large fully-buffered output cuts write syscalls when generating huge lists. Passing NULL
+        // lets the C runtime own the buffer, so it stays valid until fclose() and is freed there.
+        setvbuf(outfile, NULL, _IOFBF, 1 << 24);   // 16 MiB
     }
 
     if (firstnames_file) {
