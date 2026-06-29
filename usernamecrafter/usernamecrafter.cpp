@@ -26,6 +26,96 @@ static void str_tolower(char* s) {
     }
 }
 
+// Append the lowercase ASCII transliteration of one Unicode code point to `out`.
+// Accented Latin letters fold to their base letter (e -> e, ue -> u, ss -> ss, ...).
+// Apostrophes and hyphens (ASCII and common Unicode variants) are dropped, so
+// "O'Brien" -> "obrien" and "Smith-Jones" -> "smithjones". Unmapped non-ASCII code
+// points are dropped (best-effort ASCII username, matching how AD folds names).
+static void append_folded_cp(uint32_t cp, std::string& out) {
+    if (cp < 0x80) {                       // plain ASCII
+        if (cp == '\'' || cp == '-') return;
+        out.push_back((char)tolower((int)cp));
+        return;
+    }
+    switch (cp) {
+    case 0x2018: case 0x2019: return;      // ' ' curly single quotes
+    case 0x2010: case 0x2011: case 0x2012: // hyphen / non-breaking hyphen / figure dash
+    case 0x2013: case 0x2014: return;      // en dash / em dash
+    case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3: case 0x00C4: case 0x00C5:
+    case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3: case 0x00E4: case 0x00E5:
+    case 0x0100: case 0x0101: case 0x0102: case 0x0103: case 0x0104: case 0x0105: out.push_back('a'); return;
+    case 0x00C6: case 0x00E6: out.append("ae"); return;
+    case 0x00C7: case 0x00E7:
+    case 0x0106: case 0x0107: case 0x0108: case 0x0109: case 0x010A: case 0x010B: case 0x010C: case 0x010D: out.push_back('c'); return;
+    case 0x00D0: case 0x00F0:
+    case 0x010E: case 0x010F: case 0x0110: case 0x0111: out.push_back('d'); return;
+    case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB:
+    case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB:
+    case 0x0112: case 0x0113: case 0x0114: case 0x0115: case 0x0116: case 0x0117:
+    case 0x0118: case 0x0119: case 0x011A: case 0x011B: out.push_back('e'); return;
+    case 0x011C: case 0x011D: case 0x011E: case 0x011F: case 0x0120: case 0x0121: case 0x0122: case 0x0123: out.push_back('g'); return;
+    case 0x0124: case 0x0125: case 0x0126: case 0x0127: out.push_back('h'); return;
+    case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
+    case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
+    case 0x0128: case 0x0129: case 0x012A: case 0x012B: case 0x012C: case 0x012D:
+    case 0x012E: case 0x012F: case 0x0130: case 0x0131: out.push_back('i'); return;
+    case 0x0134: case 0x0135: out.push_back('j'); return;
+    case 0x0136: case 0x0137: out.push_back('k'); return;
+    case 0x0139: case 0x013A: case 0x013B: case 0x013C: case 0x013D: case 0x013E:
+    case 0x0141: case 0x0142: out.push_back('l'); return;
+    case 0x00D1: case 0x00F1:
+    case 0x0143: case 0x0144: case 0x0145: case 0x0146: case 0x0147: case 0x0148: out.push_back('n'); return;
+    case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5: case 0x00D6: case 0x00D8:
+    case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5: case 0x00F6: case 0x00F8:
+    case 0x014C: case 0x014D: case 0x014E: case 0x014F: case 0x0150: case 0x0151: out.push_back('o'); return;
+    case 0x0152: case 0x0153: out.append("oe"); return;
+    case 0x0154: case 0x0155: case 0x0156: case 0x0157: case 0x0158: case 0x0159: out.push_back('r'); return;
+    case 0x015A: case 0x015B: case 0x015C: case 0x015D: case 0x015E: case 0x015F: case 0x0160: case 0x0161: out.push_back('s'); return;
+    case 0x00DF: out.append("ss"); return;
+    case 0x00DE: case 0x00FE: out.append("th"); return;
+    case 0x0162: case 0x0163: case 0x0164: case 0x0165: case 0x0166: case 0x0167: out.push_back('t'); return;
+    case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC:
+    case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC:
+    case 0x0168: case 0x0169: case 0x016A: case 0x016B: case 0x016C: case 0x016D:
+    case 0x016E: case 0x016F: case 0x0170: case 0x0171: case 0x0172: case 0x0173: out.push_back('u'); return;
+    case 0x0174: case 0x0175: out.push_back('w'); return;
+    case 0x00DD: case 0x00FD: case 0x00FF:
+    case 0x0176: case 0x0177: case 0x0178: out.push_back('y'); return;
+    case 0x0179: case 0x017A: case 0x017B: case 0x017C: case 0x017D: case 0x017E: out.push_back('z'); return;
+    default: return;                       // unmapped non-ASCII: drop
+    }
+}
+
+// Fold a name into a lowercase ASCII username candidate. Input is decoded as UTF-8; a byte that
+// is not part of a valid UTF-8 sequence is treated as a Latin-1 code point, so both UTF-8 and
+// Latin-1/Windows-1252 name files transliterate sensibly. (The NUL terminator stops every lookahead
+// because an invalid/short sequence falls through to the single-byte branch.)
+static std::string fold_name(const char* s) {
+    std::string out;
+    const unsigned char* p = (const unsigned char*)s;
+    while (*p) {
+        unsigned char c = *p;
+        uint32_t cp;
+        if (c < 0x80) {
+            cp = c; p += 1;
+        }
+        else if ((c >> 5) == 0x6 && (p[1] & 0xC0) == 0x80) {
+            cp = ((uint32_t)(c & 0x1F) << 6) | (p[1] & 0x3F); p += 2;
+        }
+        else if ((c >> 4) == 0xE && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+            cp = ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F); p += 3;
+        }
+        else if ((c >> 3) == 0x1E && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) {
+            cp = ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12) | ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F); p += 4;
+        }
+        else {
+            cp = c; p += 1;                 // invalid UTF-8 -> treat as Latin-1
+        }
+        append_folded_cp(cp, out);
+    }
+    return out;
+}
+
 // A pre-parsed piece of the format string.
 enum TokenType {
     TOK_FIRSTNAME,    // full first name
@@ -101,9 +191,10 @@ static std::vector<Token> parse_format(const char* format, bool* has_name_placeh
     return tokens;
 }
 
-// Read every line from `file` into a heap array of lowercased C strings.
-// Returns the array and sets *count. Grows geometrically to avoid O(n) reallocs. Exits on OOM.
-static char** read_names(FILE* file, int* count) {
+// Read every line from `file` into a heap array of C strings, lowercased (and, when `fold` is set,
+// transliterated to ASCII with apostrophes/hyphens stripped). Returns the array and sets *count.
+// Grows geometrically to avoid O(n) reallocs. Exits on OOM.
+static char** read_names(FILE* file, int* count, bool fold) {
     char** names = NULL;
     int n = 0;
     int cap = 0;
@@ -112,12 +203,19 @@ static char** read_names(FILE* file, int* count) {
     fseek(file, 0, SEEK_SET);
     while (fgets(line, sizeof(line), file) != NULL) {
         line[strcspn(line, "\r\n")] = '\0';   // strip trailing CR and/or LF
-        char* dup = strdup(line);
+        char* dup;
+        if (fold) {
+            std::string folded = fold_name(line);
+            dup = strdup(folded.c_str());
+        }
+        else {
+            dup = strdup(line);
+            if (dup != NULL) str_tolower(dup);
+        }
         if (dup == NULL) {
             fprintf(stderr, "Failed to allocate memory for names\n");
             exit(EXIT_FAILURE);
         }
-        str_tolower(dup);
 
         if (n == cap) {
             cap = cap ? cap * 2 : 64;
@@ -266,25 +364,30 @@ private:
     size_t grow_at_ = 0;
 };
 
-void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, const char* format) {
+void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output,
+                    const std::vector<std::string>& formats, bool fold) {
     clock_t start_time = clock();
 
-    // Parse the format a single time up front.
-    bool has_name_placeholder = false;
-    std::vector<Token> tokens = parse_format(format, &has_name_placeholder);
-    if (!has_name_placeholder) {
-        fprintf(stderr, "[!] - Warning: format has no {firstname}/{lastname} placeholder; "
-                        "every combination is identical, so only one line will be written.\n");
+    // Parse every format once up front.
+    std::vector<std::vector<Token>> token_lists;
+    token_lists.reserve(formats.size());
+    for (const std::string& fmt : formats) {
+        bool has_name_placeholder = false;
+        token_lists.push_back(parse_format(fmt.c_str(), &has_name_placeholder));
+        if (!has_name_placeholder) {
+            fprintf(stderr, "[!] - Warning: format \"%s\" has no {firstname}/{lastname} placeholder; "
+                            "it contributes only a single constant line.\n", fmt.c_str());
+        }
     }
 
-    // Load the name lists (already trimmed + lowercased).
+    // Load the name lists (lowercased, and transliterated to ASCII unless --no-fold was given).
     int firstnames_count = 0;
     int lastnames_count = 0;
-    char** firstnames = read_names(firstnames_file, &firstnames_count);
-    char** lastnames = read_names(lastnames_file, &lastnames_count);
+    char** firstnames = read_names(firstnames_file, &firstnames_count, fold);
+    char** lastnames = read_names(lastnames_file, &lastnames_count, fold);
 
-    // Dedup every emitted line. `seen` holds one copy of each unique username.
-    size_t estimate = (size_t)firstnames_count * (size_t)lastnames_count;
+    // Dedup every emitted line across ALL formats. `seen` holds one copy of each unique username.
+    size_t estimate = formats.size() * (size_t)firstnames_count * (size_t)lastnames_count;
     LineSet seen(estimate);
 
     std::string line;
@@ -292,44 +395,46 @@ void generate_lists(FILE* firstnames_file, FILE* lastnames_file, FILE* output, c
     unsigned long long unique_count = 0;
     unsigned long long dup_count = 0;
 
-    for (int i = 0; i < firstnames_count; i++) {
-        for (int j = 0; j < lastnames_count; j++) {
-            line.clear();
-            for (const Token& t : tokens) {
-                switch (t.type) {
-                case TOK_FIRSTNAME:
-                    line.append(firstnames[i]);
-                    break;
-                case TOK_LASTNAME:
-                    line.append(lastnames[j]);
-                    break;
-                case TOK_FIRSTNAME_N: {
-                    size_t avail = strlen(firstnames[i]);
-                    size_t take = (t.len < 0) ? 0 : (size_t)t.len;
-                    if (take > avail) take = avail;
-                    line.append(firstnames[i], take);
-                    break;
+    for (const std::vector<Token>& tokens : token_lists) {
+        for (int i = 0; i < firstnames_count; i++) {
+            for (int j = 0; j < lastnames_count; j++) {
+                line.clear();
+                for (const Token& t : tokens) {
+                    switch (t.type) {
+                    case TOK_FIRSTNAME:
+                        line.append(firstnames[i]);
+                        break;
+                    case TOK_LASTNAME:
+                        line.append(lastnames[j]);
+                        break;
+                    case TOK_FIRSTNAME_N: {
+                        size_t avail = strlen(firstnames[i]);
+                        size_t take = (t.len < 0) ? 0 : (size_t)t.len;
+                        if (take > avail) take = avail;
+                        line.append(firstnames[i], take);
+                        break;
+                    }
+                    case TOK_LASTNAME_N: {
+                        size_t avail = strlen(lastnames[j]);
+                        size_t take = (t.len < 0) ? 0 : (size_t)t.len;
+                        if (take > avail) take = avail;
+                        line.append(lastnames[j], take);
+                        break;
+                    }
+                    case TOK_LITERAL:
+                        line.append(t.literal);
+                        break;
+                    }
                 }
-                case TOK_LASTNAME_N: {
-                    size_t avail = strlen(lastnames[j]);
-                    size_t take = (t.len < 0) ? 0 : (size_t)t.len;
-                    if (take > avail) take = avail;
-                    line.append(lastnames[j], take);
-                    break;
-                }
-                case TOK_LITERAL:
-                    line.append(t.literal);
-                    break;
-                }
-            }
 
-            line.push_back('\n');
-            if (seen.insert(line.data(), line.size())) {
-                fwrite(line.data(), 1, line.size(), output);
-                unique_count++;
-            }
-            else {
-                dup_count++;
+                line.push_back('\n');
+                if (seen.insert(line.data(), line.size())) {
+                    fwrite(line.data(), 1, line.size(), output);
+                    unique_count++;
+                }
+                else {
+                    dup_count++;
+                }
             }
         }
     }
@@ -360,19 +465,23 @@ void display_help(const char* program_name) {
     printf("            UsernameCrafter v%s\n            Oddvar Moe @oddvarmoe\n\n", VERSION);
     printf("Usage: %s [OPTIONS]\n", program_name);
     printf("Options:\n");
-    printf("  -h, --help       Show this help message and exit\n");
-    printf("  -F, --firstnames File with firstnames\n");
-    printf("  -L, --lastnames  File with lastnames\n");
-    printf("  -o, --output     Specify output file\n");
-    printf("  -f, --format     Specify format. {firstname}{lastname} or {firstname}(3).{lastname}\n");
-    printf("  -v, --version    Show program version\n\n");
-    printf("Output is always lowercase and deduplicated.\n\n");
+    printf("  -h, --help        Show this help message and exit\n");
+    printf("  -F, --firstnames  File with firstnames\n");
+    printf("  -L, --lastnames   File with lastnames\n");
+    printf("  -o, --output      Specify output file\n");
+    printf("  -f, --format      Format pattern. May be given multiple times to emit several\n");
+    printf("                    conventions at once. {firstname}{lastname} or {firstname}(3).{lastname}\n");
+    printf("      --formats-file  File with one format pattern per line (# comments allowed)\n");
+    printf("      --no-fold     Keep original characters in names (skip accent transliteration)\n");
+    printf("  -v, --version     Show program version\n\n");
+    printf("Output is always lowercase, deduplicated (across all formats), and ASCII-folded by\n");
+    printf("default (e.g. Jose Muller with accents -> jose.muller, O'Brien -> obrien).\n\n");
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}{lastname}\n", program_name);
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}.{lastname}@domain.com\n", program_name);
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}(1){lastname}\n", program_name);
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}{lastname}(2)\n", program_name);
     printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}(3){lastname}(3)\n", program_name);
-    printf("Example: %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}(3)_{lastname}(3)@domain.com\n", program_name);
+    printf("Multi:   %s -F firstnames.txt -L lastnames.txt -o output.txt -f {firstname}.{lastname} -f {firstname}(1){lastname} -f {lastname}{firstname}(1)\n", program_name);
 }
 
 // Open `path` with `mode`; on failure print an error mentioning `label` and return NULL.
@@ -384,12 +493,30 @@ static FILE* open_or_report(const char* path, const char* mode, const char* labe
     return f;
 }
 
+// Append each format line from `path` to `formats`. Blank lines and lines starting with '#'
+// (after leading whitespace) are skipped. Returns false if the file cannot be opened.
+static bool load_formats_file(const char* path, std::vector<std::string>& formats) {
+    FILE* f = open_or_report(path, "r", "formats");
+    if (f == NULL) return false;
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), f) != NULL) {
+        buf[strcspn(buf, "\r\n")] = '\0';
+        char* p = buf;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0' || *p == '#') continue;
+        formats.push_back(p);
+    }
+    fclose(f);
+    return true;
+}
+
 int main(int argc, char* argv[]) {
     // Default values for options
     char* output_file = NULL;
     char* firstnames_file = NULL;
     char* lastnames_file = NULL;
-    char* format = NULL;
+    std::vector<std::string> formats;   // one or more -f / --formats-file patterns
+    bool fold = true;                   // ASCII-fold names unless --no-fold is given
 
     // Declare file pointers
     FILE* outfile = NULL;
@@ -431,12 +558,26 @@ int main(int argc, char* argv[]) {
         }
         else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--format") == 0) {
             if (i + 1 < argc) {
-                format = argv[++i];
+                formats.push_back(argv[++i]);
             }
             else {
                 fprintf(stderr, "Error: Missing value for %s\n", argv[i]);
                 return 1;
             }
+        }
+        else if (strcmp(argv[i], "-ff") == 0 || strcmp(argv[i], "--formats-file") == 0) {
+            if (i + 1 < argc) {
+                if (!load_formats_file(argv[++i], formats)) {
+                    return 1;
+                }
+            }
+            else {
+                fprintf(stderr, "Error: Missing value for %s\n", argv[i]);
+                return 1;
+            }
+        }
+        else if (strcmp(argv[i], "--no-fold") == 0) {
+            fold = false;
         }
         else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             printf("Version %s\n", VERSION);
@@ -483,11 +624,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (format) {
-        printf("[+] - Format: %s\n", format);
+    for (const std::string& fmt : formats) {
+        printf("[+] - Format: %s\n", fmt.c_str());
     }
+    printf("[+] - Name folding: %s\n", fold ? "enabled (accents -> ASCII)" : "disabled");
 
-    if (!output_file && !firstnames_file && !lastnames_file && !format) {
+    if (!output_file && !firstnames_file && !lastnames_file && formats.empty()) {
         printf("No parameters specified - Restart with -h or --help for options\n");
         return 1;
     }
@@ -505,12 +647,12 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Error: Output file could not be opened\n");
         return 1;
     }
-    if (format == NULL) {
-        fprintf(stderr, "Error: No format specified (use -f). See -h for examples.\n");
+    if (formats.empty()) {
+        fprintf(stderr, "Error: No format specified (use -f or --formats-file). See -h for examples.\n");
         return 1;
     }
 
-    generate_lists(firstnames, lastnames, outfile, format);
+    generate_lists(firstnames, lastnames, outfile, formats, fold);
     fclose(lastnames);
     fclose(firstnames);
     fclose(outfile);
